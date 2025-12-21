@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Social Platform</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background: #fafafa;
+    }
+
+    /* Login Page */
+    .login-container {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+
+    .login-box {
+      background: white;
+      padding: 40px;
+      border-radius: 12px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+      max-width: 500px;
+      width: 90%;
+    }
+
+    .login-title {
+      font-size: 28px;
+      font-weight: 600;
+      margin-bottom: 30px;
+      text-align: center;
+    }
+
+    .category-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin: 20px 0;
+    }
+
+    .category-chip {
+      padding: 10px 15px;
+      border: 2px solid #dbdbdb;
+      border-radius: 20px;
+      font-size: 14px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .category-chip:hover {
+      border-color: #667eea;
+      background: #f8f9ff;
+    }
+
+    .category-chip.selected {
+      background: #667eea;
+      color: white;
+      border-color: #667eea;
+    }
+
+    .login-btn {
+      width: 100%;
+      padding: 12px;
+      background: #667eea;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 20px;
+    }
+
+    .login-btn:hover {
+      background: #5568d3;
+    }
+
+    /* Main App */
+    .app-container {
+      display: none;
+    }
+
+    /* Header */
+    header {
+      background: white;
+      border-bottom: 1px solid #dbdbdb;
+      padding: 15px 0;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .header-content {
+      max-width: 935px;
+      margin: 0 auto;
+      padding: 0 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .logo {
+      font-size: 24px;
+      font-weight: 600;
+    }
+
+    .search-box {
+      flex: 1;
+      max-width: 300px;
+      margin: 0 20px;
+      position: relative;
+    }
+
+    .search-input {
+      width: 100%;
+      padding: 8px 35px 8px 15px;
+      border: 1px solid #dbdbdb;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+
+    .search-icon {
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 18px;
+      color: #8e8e8e;
+    }
+
+    .search-results {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: white;
+      border: 1px solid #dbdbdb;
+      border-radius: 8px;
+      margin-top: 5px;
+      max-height: 300px;
+      overflow-y: auto;
+      display: none;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+
+    .search-results.show {
+      display: block;
+    }
+
+    .search-result-item {
+      padding: 10px 15px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+    }
+
+    .search-result-item:hover {
+      background: #fafafa;
+    }
+
+    .search-avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+    }
+
+    .user-selector select {
+      padding: 8px 12px;
+      border: 1px solid #dbdbdb;
+      border-radius: 4px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    /* Container */
+    .container {
+      max-width: 935px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 20px;
+      margin: 30px 0;
+      border-bottom: 1px solid #dbdbdb;
+    }
+
+    .tab {
+      padding: 15px 20px;
+      font-size: 16px;
+      font-weight: 600;
+      color: #8e8e8e;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+    }
+
+    .tab:hover {
+      color: #262626;
+    }
+
+    .tab.active {
+      color: #262626;
+      border-bottom-color: #262626;
+    }
+
+    .tab-icon {
+      margin-right: 8px;
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    /* Profile Section */
+    .profile-section {
+      background: white;
+      border: 1px solid #dbdbdb;
+      border-radius: 8px;
+      padding: 30px;
+      margin-bottom: 30px;
+    }
+
+    .profile-header {
+      display: flex;
+      gap: 50px;
+      align-items: center;
+    }
+
+    .avatar {
+      width: 150px;
+      height: 150px;
+      border-radius: 50%;
+      background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 60px;
+      color: white;
+      font-weight: bold;
+    }
+
+    .avatar img {
+      width: 144px;
+      height: 144px;
+      border-radius: 50%;
+      border: 3px solid white;
+      object-fit: cover;
+    }
+
+    .profile-info {
+      flex: 1;
+    }
+
+    .profile-username {
+      font-size: 28px;
+      font-weight: 300;
+      margin-bottom: 20px;
+    }
+
+    .profile-stats {
+      display: flex;
+      gap: 40px;
+      margin-bottom: 20px;
+    }
+
+    .stat strong {
+      font-weight: 600;
+    }
+
+    .profile-categories {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 15px;
+    }
+
+    .category-badge {
+      padding: 5px 12px;
+      background: #efefef;
+      border-radius: 15px;
+      font-size: 12px;
+      color: #262626;
+    }
+
+    /* Posts Grid */
+    .section-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin: 30px 0 15px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #dbdbdb;
+    }
+
+    .posts-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 20px;
+      margin-bottom: 40px;
+    }
+
+    .post-card {
+      background: white;
+      border: 1px solid #dbdbdb;
+      border-radius: 8px;
+      overflow: hidden;
+      transition: transform 0.2s;
+    }
+
+    .post-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+
+    .post-image {
+      width: 100%;
+      height: 280px;
+      background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 80px;
+      color: white;
+    }
+
+    .post-image img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .post-info {
+      padding: 15px;
+    }
+
+    .post-actions {
+      display: flex;
+      gap: 15px;
+      margin-bottom: 10px;
+    }
+
+    .action-btn {
+      background: none;
+      border: none;
+      font-size: 22px;
+      cursor: pointer;
+      padding: 0;
+      transition: transform 0.1s;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .action-btn:hover {
+      transform: scale(1.1);
+    }
+
+    .action-btn:active {
+      transform: scale(0.95);
+    }
+
+    .action-count {
+      font-size: 13px;
+      color: #8e8e8e;
+    }
+
+    .post-caption {
+      color: #262626;
+      font-size: 14px;
+      line-height: 1.4;
+      margin-bottom: 8px;
+    }
+
+    .post-categories {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 8px;
+    }
+
+    .post-category-tag {
+      padding: 3px 8px;
+      background: #efefef;
+      border-radius: 10px;
+      font-size: 11px;
+      color: #8e8e8e;
+    }
+
+    /* Suggestions */
+    .suggestions-box {
+      background: white;
+      border: 1px solid #dbdbdb;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 30px;
+    }
+
+    .people-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 15px;
+    }
+
+    .person-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px;
+      border: 1px solid #dbdbdb;
+      border-radius: 8px;
+    }
+
+    .person-card:hover {
+      background: #fafafa;
+    }
+
+    .person-avatar {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    .person-avatar img {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      object-fit: cover;
+    }
+
+    .person-info {
+      flex: 1;
+      cursor: pointer;
+      min-width: 0;
+    }
+
+    .person-username {
+      font-weight: 600;
+      font-size: 14px;
+      color: #262626;
+    }
+
+    .person-name {
+      font-size: 12px;
+      color: #8e8e8e;
+    }
+
+    .follow-btn {
+      background: #0095f6;
+      color: white;
+      border: none;
+      padding: 6px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .follow-btn:hover {
+      background: #1877f2;
+    }
+
+    .follow-btn.following {
+      background: transparent;
+      color: #262626;
+      border: 1px solid #dbdbdb;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: #8e8e8e;
+    }
+  </style>
+</head>
+<body>
+  <!-- Login Page -->
+  <div class="login-container" id="loginPage">
+    <div class="login-box">
+      <div class="login-title">📸 Welcome to Social Platform</div>
+      <p style="text-align: center; color: #8e8e8e; margin-bottom: 20px;">Select your interests to personalize your feed</p>
+      
+      <div class="category-grid" id="categoryGrid"></div>
+      
+      <select id="userSelectLogin" style="width: 100%; padding: 10px; border: 1px solid #dbdbdb; border-radius: 8px; font-size: 14px; margin-top: 20px;">
+        <option value="">Select your account...</option>
+      </select>
+      
+      <button class="login-btn" onclick="login()">Continue</button>
+    </div>
+  </div>
+
+  <!-- Main App -->
+  <div class="app-container" id="mainApp">
+    <header>
+      <div class="header-content">
+        <div class="logo">📸 Social</div>
+        
+        <div class="search-box">
+          <input type="text" class="search-input" id="searchInput" placeholder="Search users..." autocomplete="off">
+          <span class="search-icon">🔍</span>
+          <div class="search-results" id="searchResults"></div>
+        </div>
+        
+        <div class="user-selector">
+          <select id="userSelect">
+            <option value="">Loading...</option>
+          </select>
+        </div>
+      </div>
+    </header>
+
+    <div class="container">
+      <!-- Tabs -->
+      <div class="tabs">
+        <div class="tab active" onclick="switchTab('home')">
+          <span class="tab-icon">🏠</span> Home
+        </div>
+        <div class="tab" onclick="switchTab('explore')">
+          <span class="tab-icon">🔍</span> Explore
+        </div>
+      </div>
+
+      <!-- Home Tab -->
+      <div class="tab-content active" id="homeTab">
+        <div class="profile-section">
+          <div class="profile-header">
+            <div class="avatar" id="profileAvatar">
+              <span id="avatarInitial"></span>
+            </div>
+            <div class="profile-info">
+              <div class="profile-username" id="profileUsername"></div>
+              <div class="profile-stats">
+                <div class="stat"><strong id="postsCount">0</strong> posts</div>
+                <div class="stat"><strong id="followersCount">0</strong> followers</div>
+                <div class="stat"><strong id="followingCount">0</strong> following</div>
+              </div>
+              <div style="font-weight: 600; font-size: 16px; margin: 10px 0 5px;" id="profileName"></div>
+              <div style="color: #262626; font-size: 16px;" id="profileBio"></div>
+              <div class="profile-categories" id="profileCategories"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-title">My Posts</div>
+        <div class="posts-grid" id="postsGrid"></div>
+
+        <div class="section-title">People You Might Know</div>
+        <div class="suggestions-box">
+          <div class="people-list" id="peopleList"></div>
+        </div>
+      </div>
+
+      <!-- Explore Tab -->
+      <div class="tab-content" id="exploreTab">
+        <div class="section-title">Explore</div>
+        <div class="posts-grid" id="explorePosts"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
