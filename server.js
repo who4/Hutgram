@@ -3,10 +3,8 @@ require("dotenv").config();
 const express = require("express");
 const neo4j = require("neo4j-driver");
 
-// Port (Koyeb may set PORT automatically)
 const PORT = process.env.PORT || 3000;
 
-// Fail fast if missing env vars (cloud logs become obvious)
 ["NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD"].forEach((k) => {
   if (!process.env[k]) {
     throw new Error(`Missing environment variable: ${k}`);
@@ -15,12 +13,10 @@ const PORT = process.env.PORT || 3000;
 
 const app = express();
 app.use(express.static("public"));
-app.use(express.json());
+app.use(express.json({ limit: "10mb" })); // allow base64 images (8mb-ish)
 
-// Health check (helps cloud providers know your app is alive)
 app.get("/health", (req, res) => res.status(200).send("ok"));
 
-// Neo4j driver
 const driver = neo4j.driver(
   process.env.NEO4J_URI,
   neo4j.auth.basic(process.env.NEO4J_USER, process.env.NEO4J_PASSWORD)
@@ -34,18 +30,81 @@ const CATEGORIES = [
   "Business", "Health", "Education", "Entertainment", "Lifestyle"
 ];
 
-app.get("/api/categories", (req, res) => {
-  res.json(CATEGORIES);
+app.get("/api/categories", (req, res) => res.json(CATEGORIES));
+
+// ==================== USER CREATE (LOGIN) ====================
+// No passwords. This is just "create account" once.
+// Reject if username already exists (your requirement).
+
+app.post("/api/login", async (req, res) => {
+  const { username, name, bio, avatar, categories } = req.body;
+
+  if (!username || !name) {
+    return res.status(400).json({ error: "username and name are required" });
+  }
+
+  const cleanUsername = String(username).trim().toLowerCase();
+  if (!/^[a-z0-9._]{3,20}$/.test(cleanUsername)) {
+    return res.status(400).json({ error: "username must be 3-20 chars: a-z 0-9 . _" });
+  }
+
+  const cats = Array.isArray(categories) ? categories : [];
+  if (cats.length < 1) {
+    return res.status(400).json({ error: "Select at least one category" });
+  }
+  const invalid = cats.find(c => !CATEGORIES.includes(c));
+  if (invalid) {
+    return res.status(400).json({ error: `Invalid category: ${invalid}` });
+  }
+
+  // optional avatar (base64 data url)
+  if (avatar && typeof avatar === "string" && avatar.length > 10_000_000) {
+    return res.status(400).json({ error: "avatar too large" });
+  }
+
+  const session = driver.session();
+  try {
+    const exists = await session.run(
+      `MATCH (u:User {username:$username}) RETURN u LIMIT 1`,
+      { username: cleanUsername }
+    );
+    if (exists.records.length > 0) {
+      return res.status(409).json({ error: "Username already exists" });
+    }
+
+    await session.run(
+      `CREATE (u:User {
+        username: $username,
+        name: $name,
+        bio: $bio,
+        avatar: $avatar,
+        categories: $categories
+      })`,
+      {
+        username: cleanUsername,
+        name: String(name).trim(),
+        bio: String(bio || "").trim(),
+        avatar: avatar || "",
+        categories: cats
+      }
+    );
+
+    res.json({ success: true, username: cleanUsername });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  } finally {
+    await session.close();
+  }
 });
 
-// ==================== USER MANAGEMENT ====================
+// ==================== USER READ ====================
 
 app.get("/api/users", async (req, res) => {
   const session = driver.session();
   try {
     const result = await session.run(`
-      MATCH (u:User) 
-      RETURN u.username AS username, u.name AS name, u.bio AS bio, 
+      MATCH (u:User)
+      RETURN u.username AS username, u.name AS name, u.bio AS bio,
              u.avatar AS avatar, u.categories AS categories
       ORDER BY u.username
     `);
@@ -70,7 +129,7 @@ app.get("/api/user/:username", async (req, res) => {
       OPTIONAL MATCH (u)-[:FOLLOWS]->(following:User)
       OPTIONAL MATCH (u)<-[:FOLLOWS]-(followers:User)
       OPTIONAL MATCH (u)-[:POSTED]->(posts:Post)
-      RETURN u.username AS username, u.name AS name, u.bio AS bio, 
+      RETURN u.username AS username, u.name AS name, u.bio AS bio,
              u.avatar AS avatar, u.categories AS categories,
              count(DISTINCT following) AS followingCount,
              count(DISTINCT followers) AS followersCount,
@@ -108,7 +167,7 @@ app.get("/api/user/:username/posts", async (req, res) => {
              p.categories AS categories,
              count(DISTINCT likers) AS likes,
              count(DISTINCT sharers) AS shares
-      ORDER BY p.id DESC
+      ORDER BY toInteger(p.id) DESC
     `, { username: req.params.username });
 
     const posts = result.records.map(r => ({
@@ -120,6 +179,110 @@ app.get("/api/user/:username/posts", async (req, res) => {
       shares: r.get("shares").toNumber()
     }));
     res.json(posts);
+  } finally {
+    await session.close();
+  }
+});
+
+// Followers/following lists (for UI modal)
+app.get("/api/user/:username/followers", async (req, res) => {
+  const session = driver.session();
+  try {
+    const result = await session.run(`
+      MATCH (u:User {username:$username})<-[:FOLLOWS]-(f:User)
+      RETURN f.username AS username, f.name AS name, f.avatar AS avatar
+      ORDER BY f.username
+      LIMIT 200
+    `, { username: req.params.username });
+
+    res.json(result.records.map(r => ({
+      username: r.get("username"),
+      name: r.get("name"),
+      avatar: r.get("avatar") || ""
+    })));
+  } finally {
+    await session.close();
+  }
+});
+
+app.get("/api/user/:username/following", async (req, res) => {
+  const session = driver.session();
+  try {
+    const result = await session.run(`
+      MATCH (u:User {username:$username})-[:FOLLOWS]->(f:User)
+      RETURN f.username AS username, f.name AS name, f.avatar AS avatar
+      ORDER BY f.username
+      LIMIT 200
+    `, { username: req.params.username });
+
+    res.json(result.records.map(r => ({
+      username: r.get("username"),
+      name: r.get("name"),
+      avatar: r.get("avatar") || ""
+    })));
+  } finally {
+    await session.close();
+  }
+});
+
+// Is following (for profile + suggestions)
+app.get("/api/isfollowing/:follower/:following", async (req, res) => {
+  const session = driver.session();
+  try {
+    const result = await session.run(`
+      OPTIONAL MATCH (a:User {username: $follower})-[r:FOLLOWS]->(b:User {username: $following})
+      RETURN COUNT(r) > 0 AS isFollowing
+    `, { follower: req.params.follower, following: req.params.following });
+
+    res.json({ isFollowing: result.records[0].get("isFollowing") });
+  } finally {
+    await session.close();
+  }
+});
+
+// ==================== POSTS: user can create ====================
+
+app.post("/api/post", async (req, res) => {
+  const { username, caption, image, category } = req.body;
+
+  if (!username || !caption) {
+    return res.status(400).json({ error: "username and caption are required" });
+  }
+  if (!category || !CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: "valid category is required" });
+  }
+  if (image && typeof image === "string" && image.length > 12_000_000) {
+    return res.status(400).json({ error: "image too large" });
+  }
+
+  const session = driver.session();
+  try {
+    const id = Date.now().toString();
+    const result = await session.run(`
+      MATCH (u:User {username:$username})
+      CREATE (p:Post {
+        id:$id,
+        caption:$caption,
+        image:$image,
+        categories:[$category]
+      })
+      CREATE (u)-[:POSTED]->(p)
+      RETURN p.id AS id
+    `, {
+      username,
+      id,
+      caption: String(caption).trim(),
+      image: image || "",
+      category
+    });
+
+    if (result.records.length === 0) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    res.json({ success: true, id });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   } finally {
     await session.close();
   }
@@ -139,59 +302,52 @@ app.get("/api/search/users", async (req, res) => {
       LIMIT 10
     `, { query });
 
-    const users = result.records.map(r => ({
+    res.json(result.records.map(r => ({
       username: r.get("username"),
       name: r.get("name"),
       avatar: r.get("avatar") || ""
-    }));
-    res.json(users);
+    })));
   } finally {
     await session.close();
   }
 });
 
-// ==================== SUGGESTIONS ====================
+// ==================== SUGGESTIONS (people) ====================
 
 app.get("/api/suggestions/:username", async (req, res) => {
   const session = driver.session();
   try {
     const result = await session.run(`
       MATCH (me:User {username: $username})
-      
-      // Get user's categories
       WITH me, me.categories AS myCategories
-      
-      // Find friends of friends
-      MATCH (me)-[:FOLLOWS]->(friend:User)-[:FOLLOWS]->(suggestion:User)
+
+      // Friends-of-friends suggestions
+      OPTIONAL MATCH (me)-[:FOLLOWS]->(friend:User)-[:FOLLOWS]->(suggestion:User)
       WHERE NOT (me)-[:FOLLOWS]->(suggestion) AND me <> suggestion
-      
-      // Calculate category match
-      WITH suggestion, count(DISTINCT friend) AS mutualFriends, myCategories
-      
-      // Get suggestion's info
+
+      WITH me, myCategories, suggestion, count(DISTINCT friend) AS mutualFriends
+      WHERE suggestion IS NOT NULL
+
       OPTIONAL MATCH (suggestion)-[:POSTED]->(posts:Post)
       OPTIONAL MATCH (suggestion)<-[:FOLLOWS]-(followers:User)
-      
+
       WITH suggestion, mutualFriends, myCategories,
            count(DISTINCT posts) AS postCount,
            count(DISTINCT followers) AS followerCount,
            suggestion.categories AS theirCategories
-      
-      // Calculate category overlap
+
       WITH suggestion, mutualFriends, postCount, followerCount,
            size([cat IN myCategories WHERE cat IN theirCategories]) AS categoryMatch
-      
-      // Score: mutual friends (high weight) + category match + activity
+
       WITH suggestion, mutualFriends, categoryMatch,
-           (mutualFriends * 15 + categoryMatch * 8 + postCount + followerCount) AS score
-      
-      RETURN suggestion.username AS username, 
-             suggestion.name AS name, 
+           (mutualFriends * 15 + categoryMatch * 10 + postCount + followerCount) AS score
+
+      RETURN suggestion.username AS username,
+             suggestion.name AS name,
              suggestion.avatar AS avatar,
              suggestion.categories AS categories,
              mutualFriends,
-             categoryMatch,
-             score
+             categoryMatch
       ORDER BY score DESC, mutualFriends DESC
       LIMIT 8
     `, { username: req.params.username });
@@ -209,86 +365,127 @@ app.get("/api/suggestions/:username", async (req, res) => {
   }
 });
 
-// ==================== EXPLORE FEED ====================
+// ==================== EXPLORE FEED (improved) ====================
+// Includes:
+// 1) posts from following
+// 2) posts liked by following
+// 3) category-matched posts from anyone (so Explore isn't empty)
 
 app.get("/api/explore/:username", async (req, res) => {
   const session = driver.session();
   try {
     const result = await session.run(`
       MATCH (me:User {username: $username})
-      
       WITH me, me.categories AS myCategories
-      
-      // Posts from people I follow
-      MATCH (me)-[:FOLLOWS]->(following:User)-[:POSTED]->(post:Post)
-      
-      OPTIONAL MATCH (post)<-[likes:LIKES]-(likers:User)
-      OPTIONAL MATCH (post)<-[shares:SHARED]-(sharers:User)
-      OPTIONAL MATCH (me)-[myLike:LIKES]->(post)
-      OPTIONAL MATCH (me)-[myShare:SHARED]->(post)
-      
-      WITH me, post, following, myCategories,
-           count(DISTINCT likes) AS likeCount,
-           count(DISTINCT shares) AS shareCount,
-           CASE WHEN myLike IS NOT NULL THEN true ELSE false END AS alreadyLiked,
-           CASE WHEN myShare IS NOT NULL THEN true ELSE false END AS alreadyShared,
-           size([cat IN myCategories WHERE cat IN post.categories]) AS categoryMatch,
-           1 AS priority
-      
-      RETURN DISTINCT
+
+      // -------- (1) Posts from people I follow --------
+      CALL {
+        WITH me, myCategories
+        MATCH (me)-[:FOLLOWS]->(author:User)-[:POSTED]->(post:Post)
+        OPTIONAL MATCH (post)<-[likes:LIKES]-(:User)
+        OPTIONAL MATCH (post)<-[shares:SHARED]-(:User)
+        OPTIONAL MATCH (me)-[myLike:LIKES]->(post)
+        OPTIONAL MATCH (me)-[myShare:SHARED]->(post)
+        RETURN
+          post, author,
+          count(DISTINCT likes) AS likeCount,
+          count(DISTINCT shares) AS shareCount,
+          (myLike IS NOT NULL) AS alreadyLiked,
+          (myShare IS NOT NULL) AS alreadyShared,
+          size([cat IN myCategories WHERE cat IN post.categories]) AS categoryMatch,
+          1 AS priority
+      }
+
+      RETURN
         post.id AS id,
         post.caption AS caption,
         post.image AS image,
         post.categories AS categories,
-        following.username AS author,
-        following.name AS authorName,
-        following.avatar AS authorAvatar,
-        likeCount AS likes,
-        shareCount AS shares,
-        alreadyLiked,
-        alreadyShared,
-        categoryMatch,
-        priority,
-        true AS isUserPost
-      
-      UNION
-      
-      // Posts liked by people I follow
-      MATCH (me:User {username: $username})
-      MATCH (me)-[:FOLLOWS]->(friend:User)-[:LIKES]->(post:Post)
-      WHERE NOT (me)-[:POSTED]->(post)
-      
-      OPTIONAL MATCH (author:User)-[:POSTED]->(post)
-      OPTIONAL MATCH (post)<-[likes:LIKES]-(likers:User)
-      OPTIONAL MATCH (post)<-[shares:SHARED]-(sharers:User)
-      OPTIONAL MATCH (me)-[myLike:LIKES]->(post)
-      OPTIONAL MATCH (me)-[myShare:SHARED]->(post)
-      
-      WITH me, post, author, me.categories AS myCategories,
-           count(DISTINCT likes) AS likeCount,
-           count(DISTINCT shares) AS shareCount,
-           CASE WHEN myLike IS NOT NULL THEN true ELSE false END AS alreadyLiked,
-           CASE WHEN myShare IS NOT NULL THEN true ELSE false END AS alreadyShared,
-           size([cat IN myCategories WHERE cat IN post.categories]) AS categoryMatch
-      
-      RETURN DISTINCT
-        post.id AS id,
-        post.caption AS caption,
-        post.image AS image,
-        post.categories AS categories,
-        COALESCE(author.username, post.author, 'unknown') AS author,
-        COALESCE(author.name, post.author, 'Unknown User') AS authorName,
+        author.username AS author,
+        author.name AS authorName,
         author.avatar AS authorAvatar,
         likeCount AS likes,
         shareCount AS shares,
         alreadyLiked,
         alreadyShared,
-        categoryMatch,
+        priority,
+        categoryMatch
+
+      UNION
+
+      // -------- (2) Posts liked by people I follow --------
+      MATCH (me:User {username: $username})
+      WITH me, me.categories AS myCategories
+      MATCH (me)-[:FOLLOWS]->(friend:User)-[:LIKES]->(post:Post)
+      OPTIONAL MATCH (author:User)-[:POSTED]->(post)
+      WHERE author IS NOT NULL AND author.username <> me.username
+
+      OPTIONAL MATCH (post)<-[likes:LIKES]-(:User)
+      OPTIONAL MATCH (post)<-[shares:SHARED]-(:User)
+      OPTIONAL MATCH (me)-[myLike:LIKES]->(post)
+      OPTIONAL MATCH (me)-[myShare:SHARED]->(post)
+
+      WITH me, myCategories, post, author,
+           count(DISTINCT likes) AS likeCount,
+           count(DISTINCT shares) AS shareCount,
+           (myLike IS NOT NULL) AS alreadyLiked,
+           (myShare IS NOT NULL) AS alreadyShared,
+           size([cat IN myCategories WHERE cat IN post.categories]) AS categoryMatch
+
+      RETURN
+        post.id AS id,
+        post.caption AS caption,
+        post.image AS image,
+        post.categories AS categories,
+        author.username AS author,
+        author.name AS authorName,
+        author.avatar AS authorAvatar,
+        likeCount AS likes,
+        shareCount AS shares,
+        alreadyLiked,
+        alreadyShared,
         2 AS priority,
-        CASE WHEN author IS NOT NULL THEN true ELSE false END AS isUserPost
-      
-      ORDER BY priority ASC, categoryMatch DESC, likes DESC, id DESC
-      LIMIT 40
+        categoryMatch
+
+      UNION
+
+      // -------- (3) Category-matched posts from anyone --------
+      MATCH (me:User {username: $username})
+      WITH me, me.categories AS myCategories
+      MATCH (author:User)-[:POSTED]->(post:Post)
+      WHERE author.username <> me.username
+        AND NOT (me)-[:FOLLOWS]->(author)
+
+      OPTIONAL MATCH (post)<-[likes:LIKES]-(:User)
+      OPTIONAL MATCH (post)<-[shares:SHARED]-(:User)
+      OPTIONAL MATCH (me)-[myLike:LIKES]->(post)
+      OPTIONAL MATCH (me)-[myShare:SHARED]->(post)
+
+      WITH myCategories, post, author,
+           count(DISTINCT likes) AS likeCount,
+           count(DISTINCT shares) AS shareCount,
+           (myLike IS NOT NULL) AS alreadyLiked,
+           (myShare IS NOT NULL) AS alreadyShared,
+           size([cat IN myCategories WHERE cat IN post.categories]) AS categoryMatch
+      WHERE categoryMatch > 0
+
+      RETURN
+        post.id AS id,
+        post.caption AS caption,
+        post.image AS image,
+        post.categories AS categories,
+        author.username AS author,
+        author.name AS authorName,
+        author.avatar AS authorAvatar,
+        likeCount AS likes,
+        shareCount AS shares,
+        alreadyLiked,
+        alreadyShared,
+        3 AS priority,
+        categoryMatch
+
+      ORDER BY priority ASC, categoryMatch DESC, likes DESC, shares DESC, toInteger(id) DESC
+      LIMIT 60
     `, { username: req.params.username });
 
     res.json(result.records.map(r => ({
@@ -302,8 +499,7 @@ app.get("/api/explore/:username", async (req, res) => {
       likes: r.get("likes").toNumber(),
       shares: r.get("shares").toNumber(),
       alreadyLiked: r.get("alreadyLiked"),
-      alreadyShared: r.get("alreadyShared"),
-      isUserPost: r.get("isUserPost")
+      alreadyShared: r.get("alreadyShared")
     })));
   } finally {
     await session.close();
@@ -322,11 +518,11 @@ app.post("/api/like", async (req, res) => {
       MERGE (u)-[:LIKES]->(p)
       RETURN u, p
     `, { username, postId: postId.toString() });
-    
+
     if (result.records.length === 0) {
       return res.status(404).json({ error: "User or Post not found" });
     }
-    
+
     res.json({ success: true });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -361,11 +557,11 @@ app.post("/api/share", async (req, res) => {
       MERGE (u)-[:SHARED]->(p)
       RETURN u, p
     `, { username, postId: postId.toString() });
-    
+
     if (result.records.length === 0) {
       return res.status(404).json({ error: "User or Post not found" });
     }
-    
+
     res.json({ success: true });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -400,11 +596,11 @@ app.post("/api/follow", async (req, res) => {
       MERGE (a)-[:FOLLOWS]->(b)
       RETURN a, b
     `, { follower, following });
-    
+
     if (result.records.length === 0) {
       return res.status(404).json({ error: "User not found" });
     }
-    
+
     res.json({ success: true });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -429,20 +625,8 @@ app.post("/api/unfollow", async (req, res) => {
   }
 });
 
-app.get("/api/isfollowing/:follower/:following", async (req, res) => {
-  const session = driver.session();
-  try {
-    const result = await session.run(`
-      OPTIONAL MATCH (a:User {username: $follower})-[r:FOLLOWS]->(b:User {username: $following})
-      RETURN COUNT(r) > 0 AS isFollowing
-    `, { follower: req.params.follower, following: req.params.following });
-    res.json({ isFollowing: result.records[0].get("isFollowing") });
-  } finally {
-    await session.close();
-  }
-});
-
-// ==================== ADMIN APIs ====================
+// ==================== ADMIN APIs (kept) ====================
+// Your existing admin.html uses these. Leaving them as-is.
 
 app.get("/api/admin/posts", async (req, res) => {
   const session = driver.session();
@@ -453,17 +637,16 @@ app.get("/api/admin/posts", async (req, res) => {
       RETURN p.id AS id, p.caption AS caption, p.image AS image,
              p.categories AS categories,
              u.username AS username, p.author AS exploreAuthor
-      ORDER BY p.id DESC
+      ORDER BY toInteger(p.id) DESC
     `);
-    const posts = result.records.map(r => ({
+    res.json(result.records.map(r => ({
       id: r.get("id"),
       caption: r.get("caption"),
       image: r.get("image") || "",
       categories: r.get("categories") || [],
       username: r.get("username"),
       exploreAuthor: r.get("exploreAuthor")
-    }));
-    res.json(posts);
+    })));
   } finally {
     await session.close();
   }
@@ -474,17 +657,16 @@ app.get("/api/admin/follows", async (req, res) => {
   try {
     const result = await session.run(`
       MATCH (a:User)-[:FOLLOWS]->(b:User)
-      RETURN a.username AS follower, a.name AS followerName, 
+      RETURN a.username AS follower, a.name AS followerName,
              b.username AS following, b.name AS followingName
       ORDER BY a.username
     `);
-    const follows = result.records.map(r => ({
+    res.json(result.records.map(r => ({
       follower: r.get("follower"),
       followerName: r.get("followerName"),
       following: r.get("following"),
       followingName: r.get("followingName")
-    }));
-    res.json(follows);
+    })));
   } finally {
     await session.close();
   }
@@ -495,17 +677,16 @@ app.get("/api/admin/likes", async (req, res) => {
   try {
     const result = await session.run(`
       MATCH (u:User)-[:LIKES]->(p:Post)
-      RETURN u.username AS username, u.name AS name, 
+      RETURN u.username AS username, u.name AS name,
              p.id AS postId, p.caption AS caption
       ORDER BY u.username
     `);
-    const likes = result.records.map(r => ({
+    res.json(result.records.map(r => ({
       username: r.get("username"),
       name: r.get("name"),
       postId: r.get("postId"),
       caption: r.get("caption")
-    }));
-    res.json(likes);
+    })));
   } finally {
     await session.close();
   }
@@ -517,16 +698,16 @@ app.post("/api/admin/user", async (req, res) => {
   try {
     await session.run(`
       CREATE (u:User {
-        username: $username, 
-        name: $name, 
-        bio: $bio, 
-        avatar: $avatar, 
+        username: $username,
+        name: $name,
+        bio: $bio,
+        avatar: $avatar,
         categories: $categories
       })
-    `, { 
-      username, 
-      name, 
-      bio: bio || "", 
+    `, {
+      username,
+      name,
+      bio: bio || "",
       avatar: avatar || "",
       categories: categories || []
     });
@@ -545,33 +726,22 @@ app.post("/api/admin/post", async (req, res) => {
     if (username) {
       await session.run(`
         MATCH (u:User {username: $username})
-        CREATE (p:Post {
-          id: $id, 
-          caption: $caption, 
-          image: $image,
-          categories: $categories
-        })
+        CREATE (p:Post { id:$id, caption:$caption, image:$image, categories:$categories })
         CREATE (u)-[:POSTED]->(p)
-      `, { 
-        username, 
-        caption, 
-        image: image || "", 
+      `, {
+        username,
+        caption,
+        image: image || "",
         id: id || Date.now().toString(),
         categories: categories || []
       });
     } else {
       await session.run(`
-        CREATE (p:Post {
-          id: $id, 
-          caption: $caption, 
-          image: $image, 
-          author: $author,
-          categories: $categories
-        })
-      `, { 
-        caption, 
-        image: image || "", 
-        id: id || Date.now().toString(), 
+        CREATE (p:Post { id:$id, caption:$caption, image:$image, author:$author, categories:$categories })
+      `, {
+        caption,
+        image: image || "",
+        id: id || Date.now().toString(),
         author: author || "Unknown User",
         categories: categories || []
       });
@@ -611,11 +781,11 @@ app.post("/api/admin/like", async (req, res) => {
       MERGE (u)-[:LIKES]->(p)
       RETURN u, p
     `, { username, postId: postId.toString() });
-    
+
     if (result.records.length === 0) {
       return res.status(404).json({ error: "User or Post not found" });
     }
-    
+
     res.json({ success: true });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -639,13 +809,13 @@ app.delete("/api/admin/user/:username", async (req, res) => {
   }
 });
 
-app.delete("/api/admin/post/:postId", async (req, res) => {
+app.delete("/api/admin/post/:id", async (req, res) => {
   const session = driver.session();
   try {
     await session.run(`
-      MATCH (p:Post {id: $postId})
+      MATCH (p:Post {id:$id})
       DETACH DELETE p
-    `, { postId: req.params.postId });
+    `, { id: req.params.id });
     res.json({ success: true });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -654,17 +824,4 @@ app.delete("/api/admin/post/:postId", async (req, res) => {
   }
 });
 
-// Start server
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on port ${PORT}`);
-});
-
-// Graceful shutdown (helps on cloud restarts)
-process.on("SIGTERM", async () => {
-  try { await driver.close(); } catch (_) {}
-  process.exit(0);
-});
-process.on("SIGINT", async () => {
-  try { await driver.close(); } catch (_) {}
-  process.exit(0);
-});
+app.listen(PORT, () => console.log("Server running on port", PORT));
