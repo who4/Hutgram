@@ -1,22 +1,30 @@
+require("dotenv").config();
+
 const express = require("express");
 const neo4j = require("neo4j-driver");
 
-// At the top of server.js
+// Port (Koyeb may set PORT automatically)
 const PORT = process.env.PORT || 3000;
+
+// Fail fast if missing env vars (cloud logs become obvious)
+["NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD"].forEach((k) => {
+  if (!process.env[k]) {
+    throw new Error(`Missing environment variable: ${k}`);
+  }
+});
 
 const app = express();
 app.use(express.static("public"));
 app.use(express.json());
 
-// Update the driver to use process.env
+// Health check (helps cloud providers know your app is alive)
+app.get("/health", (req, res) => res.status(200).send("ok"));
+
+// Neo4j driver
 const driver = neo4j.driver(
   process.env.NEO4J_URI,
-  neo4j.auth.basic(
-    process.env.NEO4J_USER,
-    process.env.NEO4J_PASSWORD
-  )
+  neo4j.auth.basic(process.env.NEO4J_USER, process.env.NEO4J_PASSWORD)
 );
-
 
 // ==================== CATEGORIES ====================
 
@@ -646,9 +654,17 @@ app.delete("/api/admin/post/:postId", async (req, res) => {
   }
 });
 
-
-
-// At the bottom of server.js
+// Start server
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
+});
+
+// Graceful shutdown (helps on cloud restarts)
+process.on("SIGTERM", async () => {
+  try { await driver.close(); } catch (_) {}
+  process.exit(0);
+});
+process.on("SIGINT", async () => {
+  try { await driver.close(); } catch (_) {}
+  process.exit(0);
 });
