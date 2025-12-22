@@ -1,14 +1,22 @@
 const express = require("express");
 const neo4j = require("neo4j-driver");
 
+// At the top of server.js
+const PORT = process.env.PORT || 3000;
+
 const app = express();
 app.use(express.static("public"));
 app.use(express.json());
 
+// Update the driver to use process.env
 const driver = neo4j.driver(
-  "neo4j+s://cf36d344.databases.neo4j.io",
-  neo4j.auth.basic("neo4j", "ite08Ll6KjSqUtKf9HGY095xhnt5qZ3DYznJe_QAVUg")
+  process.env.NEO4J_URI,
+  neo4j.auth.basic(
+    process.env.NEO4J_USER,
+    process.env.NEO4J_PASSWORD
+  )
 );
+
 
 // ==================== CATEGORIES ====================
 
@@ -638,8 +646,9 @@ app.delete("/api/admin/post/:postId", async (req, res) => {
   }
 });
 
-app.listen(3000, () => {
-  console.log("🚀 Server running at http://localhost:3000");
-  console.log("📊 Admin Dashboard: http://localhost:3000/admin.html");
-  console.log("📱 Social Platform: http://localhost:3000");
+
+
+// At the bottom of server.js
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT}`);
 });
