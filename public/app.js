@@ -1,20 +1,18 @@
 let currentUser = null;
 let viewedUser = null;
 let selectedCategories = [];
+let exploreSearchTimer = null;
 
 /* ---------- COOKIES ---------- */
 function setCookie(name, value) {
-  document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=2592000`; // 30 days
+  document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=2592000`;
 }
 function getCookie(name) {
   const row = document.cookie.split("; ").find(r => r.startsWith(name + "="));
   return row ? decodeURIComponent(row.split("=")[1]) : null;
 }
-function clearCookie(name) {
-  document.cookie = `${name}=; path=/; max-age=0`;
-}
 
-/* ---------- DOM HELPERS ---------- */
+/* ---------- DOM ---------- */
 const $ = (id) => document.getElementById(id);
 
 function escapeHtml(s) {
@@ -38,7 +36,6 @@ async function fileToDataUrl(file, maxBytes = 8 * 1024 * 1024) {
 
 /* ---------- INIT ---------- */
 async function init() {
-  // load categories for login grid + post select
   const cats = await fetch("/api/categories").then(r => r.json());
 
   $("categoryGrid").innerHTML = cats.map(c =>
@@ -47,7 +44,19 @@ async function init() {
 
   $("postCategory").innerHTML = cats.map(c => `<option value="${c}">${c}</option>`).join("");
 
-  // auto-login from cookie
+  // Hook explore search
+  $("exploreSearchInput").addEventListener("input", () => {
+    clearTimeout(exploreSearchTimer);
+    const q = $("exploreSearchInput").value.trim();
+    if (q.length < 2) {
+      $("exploreSearchResults").classList.remove("show");
+      $("exploreSearchResults").innerHTML = "";
+      return;
+    }
+    exploreSearchTimer = setTimeout(() => exploreSearchUsers(q), 250);
+  });
+
+  // Auto login
   const saved = getCookie("hutgram_user");
   if (saved) {
     currentUser = saved;
@@ -57,9 +66,8 @@ async function init() {
     $("whoAmI").textContent = "@" + currentUser;
 
     setActiveNav("home");
-    await goHome(); // loads profile + posts
+    await goHome();
   } else {
-    // show login (default)
     $("loginPage").style.display = "flex";
     $("mainApp").style.display = "none";
   }
@@ -69,11 +77,8 @@ init();
 /* ---------- LOGIN ---------- */
 function toggleCat(cat, el) {
   el.classList.toggle("selected");
-  if (selectedCategories.includes(cat)) {
-    selectedCategories = selectedCategories.filter(c => c !== cat);
-  } else {
-    selectedCategories.push(cat);
-  }
+  if (selectedCategories.includes(cat)) selectedCategories = selectedCategories.filter(c => c !== cat);
+  else selectedCategories.push(cat);
 }
 
 async function login() {
@@ -117,15 +122,12 @@ function setActiveNav(which) {
   $("navHome").classList.toggle("active", which === "home");
   $("navExplore").classList.toggle("active", which === "explore");
   $("navPost").classList.toggle("active", which === "post");
-  $("navProfile").classList.toggle("active", which === "home"); // profile icon = home in your app
 }
 
 function switchTab(tab) {
-  // show/hide tabs
   $("homeTab").style.display = "none";
   $("exploreTab").style.display = "none";
   $("postTab").style.display = "none";
-
   $(tab + "Tab").style.display = "block";
 
   if (tab === "explore") {
@@ -138,7 +140,6 @@ function switchTab(tab) {
   }
 }
 
-// Home button must always go to YOUR account
 async function goHome() {
   viewedUser = currentUser;
   switchTab("home");
@@ -155,20 +156,13 @@ async function loadProfile(u) {
 
   $("profileUsername").textContent = p.username;
   $("profileBio").textContent = p.bio || "";
-
   $("postsCount").textContent = p.postsCount;
   $("followersCount").textContent = p.followersCount;
   $("followingCount").textContent = p.followingCount;
 
-  // avatar
-  if (p.avatar) {
-    $("profileAvatar").innerHTML = `<img src="${p.avatar}" alt="avatar">`;
-  } else {
-    const initial = (p.name || p.username || "?").charAt(0).toUpperCase();
-    $("profileAvatar").textContent = initial;
-  }
+  if (p.avatar) $("profileAvatar").innerHTML = `<img src="${p.avatar}" alt="avatar">`;
+  else $("profileAvatar").textContent = (p.name || p.username || "?").charAt(0).toUpperCase();
 
-  // follow button only when viewing someone else
   const btn = $("profileFollowBtn");
   if (u !== currentUser) {
     btn.style.display = "inline-block";
@@ -179,10 +173,10 @@ async function loadProfile(u) {
     btn.style.display = "none";
   }
 
+  await loadPeopleYouMightKnow(currentUser); // suggestions depend on current user
   await loadPosts(u);
 }
 
-/* Clicking author name should open their profile */
 async function viewUser(u) {
   viewedUser = u;
   switchTab("home");
@@ -204,6 +198,93 @@ async function toggleFollow() {
   });
 
   await loadProfile(viewedUser);
+}
+
+/* ---------- FOLLOWERS / FOLLOWING MODAL ---------- */
+async function openFollowModal(mode) {
+  const title = mode === "followers" ? `Followers of @${viewedUser}` : `Following of @${viewedUser}`;
+  $("followModalTitle").textContent = title;
+
+  const endpoint = mode === "followers"
+    ? `/api/user/${viewedUser}/followers`
+    : `/api/user/${viewedUser}/following`;
+
+  const list = await fetch(endpoint).then(r => r.json());
+  const body = $("followModalBody");
+
+  if (!list.length) {
+    body.innerHTML = `<div style="padding:14px;color:#777;text-align:center;">Empty</div>`;
+  } else {
+    body.innerHTML = list.map(u => `
+      <div class="search-item" onclick="closeFollowModal(); viewUser('${u.username}')">
+        <div class="mini-avatar">
+          ${u.avatar ? `<img src="${u.avatar}" alt="a">` : escapeHtml((u.name||u.username).charAt(0).toUpperCase())}
+        </div>
+        <div>
+          <div style="font-weight:900">@${escapeHtml(u.username)}</div>
+          <div class="mini-name">${escapeHtml(u.name || "")}</div>
+        </div>
+      </div>
+    `).join("");
+  }
+
+  $("followModalBackdrop").style.display = "flex";
+}
+function closeFollowModal() {
+  $("followModalBackdrop").style.display = "none";
+}
+
+/* ---------- PEOPLE YOU MIGHT KNOW ---------- */
+async function loadPeopleYouMightKnow(username) {
+  const box = $("peopleYouMightKnow");
+  box.innerHTML = `<div style="color:#777;font-size:12px">Loading...</div>`;
+
+  const people = await fetch(`/api/suggestions/${username}`).then(r => r.json());
+
+  if (!people.length) {
+    box.innerHTML = `<div style="color:#777;font-size:12px">No suggestions yet. Follow someone to build the graph.</div>`;
+    return;
+  }
+
+  // fetch follow status for each suggested user
+  const enriched = await Promise.all(people.map(async (p) => {
+    const f = await fetch(`/api/isfollowing/${currentUser}/${p.username}`).then(r => r.json());
+    return { ...p, isFollowing: !!f.isFollowing };
+  }));
+
+  box.innerHTML = enriched.map(p => `
+    <div class="person">
+      <div class="mini-avatar" onclick="viewUser('${p.username}')" style="cursor:pointer">
+        ${p.avatar ? `<img src="${p.avatar}" alt="a">` : escapeHtml((p.name||p.username).charAt(0).toUpperCase())}
+      </div>
+      <div class="info" onclick="viewUser('${p.username}')">
+        <div class="u">@${escapeHtml(p.username)}</div>
+        <div class="n">${escapeHtml(p.name || "")}${p.mutualFriends ? ` · ${p.mutualFriends} mutual` : ""}</div>
+      </div>
+      <button class="follow-btn ${p.isFollowing ? "following" : ""}" onclick="event.stopPropagation(); quickToggleFollow('${p.username}', this)">
+        ${p.isFollowing ? "Following" : "Follow"}
+      </button>
+    </div>
+  `).join("");
+}
+
+async function quickToggleFollow(targetUsername, button) {
+  const isFollowing = button.classList.contains("following");
+  const endpoint = isFollowing ? "/api/unfollow" : "/api/follow";
+
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ follower: currentUser, following: targetUsername })
+  });
+
+  if (!res.ok) return;
+
+  button.classList.toggle("following");
+  button.textContent = isFollowing ? "Follow" : "Following";
+
+  // Update counts if viewing current user
+  if (viewedUser) loadProfile(viewedUser);
 }
 
 /* ---------- POSTS (PROFILE) ---------- */
@@ -230,7 +311,7 @@ async function loadPosts(u) {
   `).join("");
 }
 
-/* ---------- EXPLORE (LIKES WORK HERE) ---------- */
+/* ---------- EXPLORE POSTS (LIKE WORKS) ---------- */
 async function loadExplore(username) {
   const posts = await fetch(`/api/explore/${username}`).then(r => r.json());
   const grid = $("explorePosts");
@@ -278,6 +359,33 @@ async function toggleLike(postId, btn) {
   likesEl.textContent = String(parseInt(likesEl.textContent, 10) + (isLiked ? -1 : 1));
 }
 
+/* ---------- EXPLORE USER SEARCH ---------- */
+async function exploreSearchUsers(q) {
+  const res = await fetch(`/api/search/users?q=${encodeURIComponent(q)}`);
+  const users = await res.json();
+  const box = $("exploreSearchResults");
+
+  if (!users.length) {
+    box.innerHTML = `<div style="padding:12px;color:#777;text-align:center;">No users found</div>`;
+    box.classList.add("show");
+    return;
+  }
+
+  box.innerHTML = users.map(u => `
+    <div class="search-item" onclick="viewUser('${u.username}'); $('exploreSearchResults').classList.remove('show'); $('exploreSearchInput').value='';">
+      <div class="mini-avatar">
+        ${u.avatar ? `<img src="${u.avatar}" alt="a">` : escapeHtml((u.name||u.username).charAt(0).toUpperCase())}
+      </div>
+      <div>
+        <div style="font-weight:900">@${escapeHtml(u.username)}</div>
+        <div class="mini-name">${escapeHtml(u.name || "")}</div>
+      </div>
+    </div>
+  `).join("");
+
+  box.classList.add("show");
+}
+
 /* ---------- CREATE POST ---------- */
 async function createPost() {
   try {
@@ -302,7 +410,6 @@ async function createPost() {
     $("postCaption").value = "";
     $("postImage").value = "";
 
-    // go back home after posting
     await goHome();
   } catch (e) {
     alert(e.message || "Post error");
